@@ -1,0 +1,132 @@
+version: "3"
+
+services:
+
+  metabase:
+    depends_on:
+      - postgres
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: postgres
+      MB_DB_DBNAME: ${POSTGRES_DB}
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
+      MB_DB_PORT: 5432
+    image: metabase/metabase:v0.45.3
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.metabase.entrypoints: websecure
+      traefik.http.routers.metabase.rule: Host(`analytics.${HOST}`)
+      traefik.http.routers.metabase.tls: "true"
+      traefik.http.routers.metabase.tls.certresolver: dns
+      traefik.http.services.metabase.loadbalancer.server.port: 3000
+    networks:
+      metabudi_net: {}
+    restart: unless-stopped
+    volumes:
+      - /dev/urandom:/dev/random:ro
+
+  postgres:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    image: postgres:15
+    networks:
+      metabudi_net: {}
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  traefik:
+    command:
+    - --accessLog=true
+    - --api.insecure=false
+    - --api.dashboard=true
+    - --api.debug=false
+    - --certificatesResolvers.dns.acme.dnsChallenge.provider=${ACME_PROVIDER}
+    - --certificatesResolvers.dns.acme.email=${CF_API_EMAIL}
+    - --certificatesResolvers.dns.acme.storage=/acme/acme.json
+    - --entrypoints.web.address=:80
+    - --entrypoints.websecure.address=:443
+    - --entrypoints.web.http.redirections.entryPoint.to=websecure
+    - --entrypoints.web.http.redirections.entryPoint.scheme=https
+    - --entrypoints.web.http.redirections.entrypoint.permanent=true
+    - --log.level=ERROR
+    - --providers.docker=true
+    - --providers.docker.endpoint=unix:///var/run/docker.sock
+    - --providers.docker.exposedbydefault=false
+    - --providers.docker.network=metabudi_net
+    environment:
+      CF_API_EMAIL: ${CF_API_EMAIL}
+      CF_API_KEY: ${CF_API_KEY}
+    image: traefik:2.9
+    labels:
+      traefik.enable: "true"
+      traefik.http.middlewares.traefik-auth.basicauth.users: ${TRAEFIK_BASICAUTH}
+      traefik.http.routers.traefik.entrypoints: websecure
+      traefik.http.routers.traefik.middlewares: traefik-auth
+      traefik.http.routers.traefik.rule: Host(`traefik.${HOST}`)
+      traefik.http.routers.traefik.service: api@internal
+      traefik.http.routers.traefik.tls: "true"
+      traefik.http.routers.traefik.tls.certresolver: dns
+      traefik.http.services.traefik.loadbalancer.server.port: 8080
+    networks:
+      metabudi_net: {}
+    ports:
+    - published: 80
+      target: 80
+    - published: 443
+      target: 443
+    restart: unless-stopped
+    volumes:
+    - /var/lib/metabudi/acme:/acme:rw
+    - /var/run/docker.sock:/var/run/docker.sock:rw
+
+  app-service:
+    volumes:
+      - ${PLUGINS_DIR}:${PLUGINS_DIR}
+    networks:
+      metabudi_net: {}
+
+  worker-service:
+    networks:
+      metabudi_net: {}
+
+  minio-service:
+    networks:
+      metabudi_net: {}
+
+  proxy-service:
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.budibase.entrypoints: websecure
+      traefik.http.routers.budibase.rule: Host(`${HOST}`)
+      traefik.http.routers.budibase.tls: "true"
+      traefik.http.routers.budibase.tls.certresolver: dns
+      traefik.http.services.budibase.loadbalancer.server.port: ${MAIN_PORT}
+    networks:
+      metabudi_net: {}
+
+  couchdb-service:
+    networks:
+      metabudi_net: {}
+
+  couch-init:
+    networks:
+      metabudi_net: {}
+
+  redis-service:
+    networks:
+      metabudi_net: {}
+
+  watchtower-service:
+    networks:
+      metabudi_net: {}
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  metabudi_net:
